@@ -2,6 +2,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <ctype.h>
 
 char error_message[30] = "An error has occurred\n";
 
@@ -9,96 +14,227 @@ void printError() {
 	write(STDERR_FILENO, error_message, strlen(error_message));
 }
 
+char* destroyWhitespace(char* string) {
+	printf("Pre: %s.\n", string);
+	char* out = malloc(strlen(string));
+	//first need to find first letter.
+	int i = 0;
+	int j = 0;
+	while (isspace(string[i])) i++;
+	//Have found first letter. Now need to parse through so that one space is left
+	//between words.
+	while(i < strlen(string)) {
+		if (!isspace(string[i]))out[j++] = string[i];
+		else if (!isspace(string[i+1]) && string[i+1] != '\0') out[j++] = ' ';
+		i++;
+	}
+	out[j] = '\0';
+	printf("Post: %s.\n", out);
+	return out;
+}
+
+int countWords(char *string) {
+	int count = 0;
+	char state = 0; //1 for in word, 0 for outside.
+
+	while (*string) {
+		//If next char is white space, set state to outside
+		if (*string == ' ' || *string == '\t')
+		state = 0;
+		//Else next char is a letter.
+		//If outside, inc word count and set state to inside. If inside, do nothing.
+		else if (state == 0) {
+			state = 1;
+			count++;
+		}
+		string++; //Next char
+	}
+	return count;
+}
+
+/*Allocates space for an args array, places args, returns pointer to arg array
+* For each arg:
+* Malloc space for the argument.
+* Get the argument from process into temp.
+* Copy the arg into the malloced space.
+*/
+char** getArgs(int numArgs, char *process) {
+	char** args;
+	//Set temp to parse through given process.
+	char *temp = strtok(process, " \0");
+	args = malloc(numArgs * sizeof(char*));
+	args[0] = malloc(strlen(process) + 1);
+	strcpy(args[0], temp);
+	for (int i = 1; i < numArgs; i++) {
+		args[i] = malloc(strlen(process) + 1);
+		temp = strtok(NULL, " \0");
+		strcpy(args[i], temp);
+		printf("argsArray: %p %s\n", &args[i], args[i]);
+	}
+	return args;
+}
+
 int main(int argc, char *argv[]) {
 	size_t n = 0;
 	char *line = NULL;
-	char *command = NULL;
-	char *process = NULL;
 	int numArgs = 0;
-	char *strChk = malloc(4);
+	char **path;
+	int numPaths = 1;
+	mode = 0;
+	path = malloc(sizeof(char*));
+	path[0] = malloc(5);
+	strcpy(path[0], "/bin/");
 
-	if (argc == 1) {
-		//while(1) {
-		//INTERACTIVE MODE
-			size_t n = 0;
-			line = NULL;
-			command = NULL;
-			process = NULL;
-			numArgs = 0;
-
-			//Parse each line
-			printf("%s", "wish> ");
-			getline(&line, &n, stdin);
-			while (line != NULL) {
-				//Get command
-				command = strtok(line, "&");
-				//Remove newline from command if there is one
-				command = strtok(command, "\n");
-				//First arg is the process to run
-				process = strtok(NULL, " ");
-
-				//Now need to get args
-
-				//Find number of args
-				printf("Command: %s\n", command);
-				for (int i = 0; i < strlen(command); i++){
-					if (command[i] == ' ' || command[i] == EOF) numArgs++;
-				}
-
-				//Create array to put args in and put them there
-				char *argsArray[numArgs];
-				for (int i = 0; i < numArgs; i++) {
-					//argsArray[i] = malloc(strlen(command) * sizeof(char));
-					argsArray[i] = strtok(NULL, " ");
-				}  
-
-				//We now have our proc name, our number of args, and an array of them.
-				//Can now execute process.
-
-				//Going to code for built in commands first as those are probably
-				//more likely to occur.
-				//Exit
-				strcpy(strChk, "exit");
-				//printf("%p\n", string);
-				//printf("%s%s.", process, strChk);
-				if (!strcmp(process, strChk)) exit(0);
-
-				//cd
-				strcpy(strChk, "cd");
-				if (!strcmp(process, strChk)) {
-					if (numArgs != 1) { 
-						printError();
-						printf("%s\n", "Bad Arg");
-						printf("numArgs: %d\n", numArgs);
-					}
-					else {
-						if(chdir(argsArray[0]) == -1) printError();
-					}	
-				}
-
-
-
-
-
-				// while (curr != NULL) {
-				// 	//Built in commands
-				// 	//Exit
-				// 	if (*curr == "exit") exit(0);
-				// 	//CD
-				// 	if (*curr = "cd") {
-				// 		curr = strtok(line);
-				// 		next = strtok(line);
-				// 		//Check
-				// 		if (curr == NULL || next != "&" || next != NULL)
-				// 				printError();
-				//
-				//
-				// 	}
-				// }
-				printf("%s", "wish> ");
-				getline(&line, &n, stdin);
-			}
-		//}
+	//Batch vs interactive mode
+	if (argc != 1) {
+		int in = open(argv[1], O_RDONLY);
+		dup2(in, 0);
+		close(in);
+		mode = 1;
 	}
+		size_t n = 0;
+		numArgs = 0;
+
+		//Parse each line
+		if(!mode) printf("%s", "wish> ");
+		getline(&line, &n, stdin);
+		while (line != NULL) {
+			n = 0;
+			numArgs = 0;
+			printf("%s\n", line);
+			//Get command
+			//Remove newline char from line of text
+			//Get first command from line
+			char *redirect = strtok(line, "&\n");
+
+			char *temp = malloc(strlen(redirect));
+			strcpy(temp, redirect);
+			printf("redirect: %s.\n", redirect);
+
+			//Check for redirection
+			char *process = strtok_r(redirect, ">", &redirect);
+			printf("redirect post: %s.\n", redirect);
+			int redirection = 0;
+			if (strcmp(temp, process)) {
+				redirection = 1;
+				printf("%s\n", "Redirection detected");
+			}
+			free(temp);
+
+			//Get rid of excess white space
+			process  = destroyWhitespace(process);
+			redirect = destroyWhitespace(redirect);
+			//Get number of arguments
+			numArgs = countWords(process);
+
+			//Now actually need to get args
+			char **argsArray = getArgs(numArgs, process);
+			//argsArray stores the name of the proc at index 0 and the rest of the
+			//arguments at later indeces.
+			//We now have our proc name, our number of args, and an array of them.
+			//Can now execute process.
+
+			//Going to code for built in commands first as those are probably
+			//more likely to occur.
+			//Exit
+			if (!strcmp(argsArray[0], "exit")) {
+				if (numArgs != 1) printError();
+				else exit(0);
+			}
+
+			//cd
+			else if (!strcmp(argsArray[0], "cd")) {
+				if (numArgs != 2) printError();
+				else {
+					if(chdir(argsArray[1]) == -1) printError();
+				}
+			}
+
+
+			//Path
+			//User supplies paths to search for programs to use.
+			//This function simply replaces the char *path[] variable with the
+			//argsArray generated by the command minus argsArray[0].
+			else if(!strcmp(argsArray[0], "path")) {
+				//Shift argsArray[0] out of array.
+				n = 1;
+				for (int i = 0; i < numArgs - 1; i++) {
+					strcpy(argsArray[i], argsArray[i + 1]);
+					//Put a '/' on the end if there isn't one.
+					if (argsArray[i][strlen(argsArray[i]) - 1] != '/')
+						strcat(argsArray[i], "/");
+				}
+				strcpy(argsArray[numArgs - 1], "");
+
+				//Clear previous Paths
+				for (int i = 0; i < numPaths; i++) free(path[i]);
+				free(path);
+
+				//Set path to point to args array.
+				path = argsArray;
+				numPaths = numArgs - 1;
+				printf("argsArray: %p\n", argsArray);
+				printf("pathPtr: %p\n", path);
+
+
+				//Test paths.
+				for (int i = 0; i < numArgs - 1; i++) {
+					//path[i] = argsArray[i];
+					printf("Paths: %s\n", path[i]);
+
+				}
+			}
+
+
+			//Actual programs
+			//Need to loop through all paths to try and find program
+			//concat the program onto the end of the path and try to access it
+			//if possible, set success to 1 to exit the loop
+			//else increment the counter.
+			else {
+
+
+				char *currPath = malloc(100);
+				int success = 0;
+				int currArg = 0;
+				while (currArg < numPaths || !success) {
+					strcpy(currPath, path[currArg]);
+					currPath = strcat(currPath, argsArray[0]);
+					if(!access(currPath, X_OK)) {
+						success = 1;
+					}
+					currArg++;
+				}
+				if (success) {
+					if(fork() == 0) {
+						if (redirection) {
+							printf("redirection output: .%s.\n", redirect);
+							int out = open(redirect, O_WRONLY | O_TRUNC | O_CREAT,
+								S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
+							dup2(out, 1);
+							close(out);
+						}
+						execv(currPath, argsArray);
+					}
+					else wait(NULL);
+				}
+				else printError();
+				free(currPath);
+			}
+
+			//Need to free up heap space taken by argsArray if path wasn't called
+			if (!n) {
+				for (int i = 0; i < numArgs; i++) free(argsArray[i]);
+				free(argsArray);
+				n = 0;
+			}
+
+			free(process);
+			free(redirect);
+
+			if(!mode) printf("%s", "wish> ");
+			getline(&line, &n, stdin);
+		}
+		//}
 	exit(0);
 }
