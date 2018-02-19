@@ -14,6 +14,13 @@ void printError() {
 	write(STDERR_FILENO, error_message, strlen(error_message));
 }
 
+typedef struct {
+	char *name;
+	char **args;
+	int redirection;
+} Command;
+
+
 char* destroyWhitespace(char* string) {
 	printf("Pre: %s.\n", string);
 	char* out = malloc(strlen(string));
@@ -52,6 +59,14 @@ int countWords(char *string) {
 	return count;
 }
 
+int countTerms(char *string, char target) {
+	int count = 1;
+	while (*string) {
+		if (*string == target) count++;
+		string++;
+	}
+}
+
 /*Allocates space for an args array, places args, returns pointer to arg array
 * For each arg:
 * Malloc space for the argument.
@@ -80,7 +95,8 @@ int main(int argc, char *argv[]) {
 	int numArgs = 0;
 	char **path;
 	int numPaths = 1;
-	mode = 0;
+	int mode = 0;
+	int numCmds = 0;
 	path = malloc(sizeof(char*));
 	path[0] = malloc(5);
 	strcpy(path[0], "/bin/");
@@ -92,14 +108,21 @@ int main(int argc, char *argv[]) {
 		close(in);
 		mode = 1;
 	}
-		size_t n = 0;
+		n = 0;
 		numArgs = 0;
 
 		//Parse each line
 		if(!mode) printf("%s", "wish> ");
 		getline(&line, &n, stdin);
 		while (line != NULL) {
+			numCmds =  countTerms(line, '&');
 			n = 0;
+			//Create array of commands
+			Command *cmds = malloc(numCmds * sizeof(Command));
+			for (int i = 0; i < numCmds, i++) {
+				//Set redirection
+				//Get args, set name and args
+			}
 			numArgs = 0;
 			printf("%s\n", line);
 			//Get command
@@ -125,7 +148,7 @@ int main(int argc, char *argv[]) {
 			process  = destroyWhitespace(process);
 			redirect = destroyWhitespace(redirect);
 			//Get number of arguments
-			numArgs = countWords(process);
+			numArgs = countTerms(process, ' ');
 
 			//Now actually need to get args
 			char **argsArray = getArgs(numArgs, process);
@@ -220,6 +243,7 @@ int main(int argc, char *argv[]) {
 				}
 				else printError();
 				free(currPath);
+				currPath = NULL;
 			}
 
 			//Need to free up heap space taken by argsArray if path wasn't called
