@@ -15,15 +15,22 @@ void printError() {
 }
 
 typedef struct {
-	char *name;
 	char **args;
-	int redirection;
+	char *name;
+	char *redirect;
+	char *full;
+	int numArgs;
+	char builtin;
+	char ok;
 } Command;
 
 
-char* destroyWhitespace(char* string) {
-	printf("Pre: %s.\n", string);
-	char* out = malloc(strlen(string));
+//Edits the given string to not have excess white space.
+//Returns number of words.
+int destroyWhitespace(char* string) {
+	if (strstr(string, ">") || string[0] == '\0') return 0; //Check for incorrect redirect chars.
+	int numWords = 1;
+	char *out = malloc(strlen(string) + 1);
 	//first need to find first letter.
 	int i = 0;
 	int j = 0;
@@ -31,32 +38,18 @@ char* destroyWhitespace(char* string) {
 	//Have found first letter. Now need to parse through so that one space is left
 	//between words.
 	while(i < strlen(string)) {
-		if (!isspace(string[i]))out[j++] = string[i];
-		else if (!isspace(string[i+1]) && string[i+1] != '\0') out[j++] = ' ';
+		if (!isspace(string[i])) out[j++] = string[i];
+		else if (!isspace(string[i+1]) && string[i+1] != '\0') {
+			out[j++] = ' ';
+			numWords++;
+		}
 		i++;
 	}
 	out[j] = '\0';
-	printf("Post: %s.\n", out);
-	return out;
-}
-
-int countWords(char *string) {
-	int count = 0;
-	char state = 0; //1 for in word, 0 for outside.
-
-	while (*string) {
-		//If next char is white space, set state to outside
-		if (*string == ' ' || *string == '\t')
-		state = 0;
-		//Else next char is a letter.
-		//If outside, inc word count and set state to inside. If inside, do nothing.
-		else if (state == 0) {
-			state = 1;
-			count++;
-		}
-		string++; //Next char
-	}
-	return count;
+	strcpy(string, out);
+	free(out);
+	//printf("Post destroy: %s\n", out);
+	return numWords;
 }
 
 int countTerms(char *string, char target) {
@@ -65,6 +58,7 @@ int countTerms(char *string, char target) {
 		if (*string == target) count++;
 		string++;
 	}
+	return count;
 }
 
 /*Allocates space for an args array, places args, returns pointer to arg array
@@ -81,184 +75,257 @@ char** getArgs(int numArgs, char *process) {
 	args[0] = malloc(strlen(process) + 1);
 	strcpy(args[0], temp);
 	for (int i = 1; i < numArgs; i++) {
-		args[i] = malloc(strlen(process) + 1);
+		//args[i] = malloc(strlen(process) + 1);
 		temp = strtok(NULL, " \0");
-		strcpy(args[i], temp);
-		printf("argsArray: %p %s\n", &args[i], args[i]);
+		args[i] = strdup(temp);
+		//printf("temp: %p %s\n", temp, temp);
+		//strtok returns null on empty string
+		//if (temp[0] == '\0') strcpy
+		//strcpy(args[i], temp);
+		//printf("argsArray: %p %s\n", &args[i], args[i]);
 	}
 	return args;
 }
 
+//Splits a string into a pre > and post >.
+void getRedirect(char *redirect, char *process, char *string) {
+	char *temp = strdup(string);
+	char *tempPtr;
+	//printf("temp: %s\n", temp);
+	tempPtr = strtok(temp, ">");
+	strcpy(process, tempPtr);
+	//printf("process: %s\n", process);
+	//printf("temp: %s\n", temp);
+	tempPtr = strtok(NULL, "\0");
+	//printf("tempPtr: %s\n",tempPtr);
+	//printf("Redirect: %s\n", redirect);
+	if (tempPtr) strcpy(redirect, tempPtr);
+	//printf("tempPtr: .%s.\n", tempPtr);
+	//printf("Redirect: %s\n", redirect);
+	free(temp);
+}
+
+/* Path
+*User supplies paths to search for programs to use.
+*This function replaces the the allocated paths to new ones supplied
+*by user command. The zeroth element of path[] is "path", which is ignored
+*when reading paths.
+*/
+int updatePaths(char **path, Command cmd, int numPaths){
+	//Free old paths
+	for (int i = 0; i < numPaths; i++) free(path[i]);
+	free(path);
+
+	//Allocate for and place new paths
+	path = malloc((cmd.numArgs) * sizeof(char*));
+	for (int i = 0; i < cmd.numArgs; i++){
+		path[i] = malloc(strlen(cmd.args[i]) + 2);
+		strcpy(path[i], cmd.args[i]);
+		//Put a '/' at the end if there isn't one.
+		if (path[i][strlen(path[i]) - 1] != '/')
+		strcat(path[i], "/");
+	}
+	return cmd.numArgs;
+}
+
+void runCmds(Command *cmd, char** path, int numCmds, int numPaths) {
+	int children = 0;
+	//char **correctPath = malloc(numCmds * sizeof(char*));
+	//char correctPath[100][100];
+	char *correctPath[numCmds];
+	for (int i = 0; i < numCmds; i++) {
+
+		correctPath[i] = calloc(100,1);
+		if (cmd[i].builtin == 0) {
+			char *currPath = calloc(100,1);
+			//printf("%s\n", "Hey");
+			int j = 0;
+			//Find correct path
+			while(j < numPaths - 1 && correctPath[i][0] == '\0') {
+				strcpy(currPath, path[j + 1]);
+				//printf("currPath: %s\n", currPath);
+				//printf("currArg: %s\n", cmd[i].name);
+				strcat(currPath, cmd[i].name);
+				if (!access(currPath, X_OK)) {
+					strcpy(correctPath[i], currPath);
+
+				}
+				j++;
+			}
+			//printf("%s\n", currPath);
+			free(currPath);
+			//printf("%s\n", "test");
+		}
+		//printf("%s\n", correctPath[i]);
+	}
+
+	//Now execute each nonbuiltin cmd
+	for (int i = 0; i < numCmds; i++) {
+		if (correctPath[i][0] != '\0' && cmd[i].ok == 1) {
+			children++;
+			if (fork() == 0) {
+				//Redirect output
+				if(cmd[i].redirect[0] != '\0') {
+					int out = open(cmd[i].redirect, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
+					dup2(out, 1);
+					close(out);
+				};
+				execv(correctPath[i], cmd[i].args);
+			}
+		}
+		else if (cmd[i].builtin == 0) printError();
+	}
+
+	//Wait for children and clean up
+	//printf("Children: %d\n", children);
+	for (int i = 0; i < children; i++) {
+		wait(NULL);
+		free(correctPath[i]);
+	}
+}
+
+Command* buildCmds(char* line) {
+	int numCmds = countTerms(line, '&');
+	if (numCmds == 0) return NULL;
+	char *linePtr = strtok_r(line, "&\n", &line);
+	Command *cmd = malloc(numCmds * sizeof(Command));
+	for (int i = 0; i < numCmds; i++) {
+		cmd[i].builtin = 0;
+		cmd[i].ok = 1;
+		//Set redirection
+		//Get args, set name and args
+		cmd[i].full = malloc(numChars);
+		strcpy(cmd[i].full, linePtr);
+		cmd[i].redirect = calloc(1, numChars);
+		char *process = malloc(numChars);
+		if (strstr(cmd[i].full, ">")) {
+			getRedirect(cmd[i].redirect, process, cmd[i].full);
+			cmd[i].ok = destroyWhitespace(cmd[i].redirect);
+		}
+		else strcpy(process, cmd[i].full);
+
+		//Smash excess white space
+		cmd[i].numArgs = destroyWhitespace(process);
+
+		//Organize into arguments
+		cmd[i].args = getArgs(cmd[i].numArgs, process);
+		cmd[i].name = malloc(strlen(cmd[i].args[0]) + 1);
+		strcpy(cmd[i].name, cmd[i].args[0]);
+
+		linePtr = strtok_r(NULL, "&\n", &line);
+	}
+	return cmd;
+}
+
+
 int main(int argc, char *argv[]) {
 	size_t n = 0;
 	char *line = NULL;
-	int numArgs = 0;
+	char *linePtr;
 	char **path;
-	int numPaths = 1;
+	int numPaths = 2;
 	int mode = 0;
 	int numCmds = 0;
-	path = malloc(sizeof(char*));
-	path[0] = malloc(5);
-	strcpy(path[0], "/bin/");
+	int numChars = 0;
+	path = malloc(2 * sizeof(char*));
+	path[0] = malloc(10);
+	path[1] = malloc(10);
+	strcpy(path[0], "path");
+	strcpy(path[1], "/bin/");
 
 	//Batch vs interactive mode
-	if (argc != 1) {
+	if (argc == 2) {
 		int in = open(argv[1], O_RDONLY);
+		if (in == -1) {
+			printError();
+			exit(1);
+		}
 		dup2(in, 0);
 		close(in);
 		mode = 1;
 	}
+	else if (argc >= 2) {
+		printError();
+		exit(1);
+	}
+
+	//Parse each line
+	if(!mode) printf("%s", "wish> ");
+	numChars = getline(&line, &n, stdin);
+	while (line != NULL) {
 		n = 0;
-		numArgs = 0;
-
-		//Parse each line
-		if(!mode) printf("%s", "wish> ");
-		getline(&line, &n, stdin);
-		while (line != NULL) {
-			numCmds =  countTerms(line, '&');
-			n = 0;
-			//Create array of commands
-			Command *cmds = malloc(numCmds * sizeof(Command));
-			for (int i = 0; i < numCmds, i++) {
-				//Set redirection
-				//Get args, set name and args
+		//Build array of commands
+		numCmds = countTerms(line, '&');
+		linePtr = strtok_r(line, "&\n", &line);
+		Command *cmd = malloc(numCmds * sizeof(Command));
+		for (int i = 0; i < numCmds; i++) {
+			cmd[i].builtin = 0;
+			cmd[i].ok = 1;
+			//Set redirection
+			//Get args, set name and args
+			cmd[i].full = malloc(numChars);
+			strcpy(cmd[i].full, linePtr);
+			cmd[i].redirect = calloc(1, numChars);
+			char *process = malloc(numChars);
+			if (strstr(cmd[i].full, ">")) {
+				getRedirect(cmd[i].redirect, process, cmd[i].full);
+				cmd[i].ok = destroyWhitespace(cmd[i].redirect);
 			}
-			numArgs = 0;
-			printf("%s\n", line);
-			//Get command
-			//Remove newline char from line of text
-			//Get first command from line
-			char *redirect = strtok(line, "&\n");
+			else strcpy(process, cmd[i].full);
 
-			char *temp = malloc(strlen(redirect));
-			strcpy(temp, redirect);
-			printf("redirect: %s.\n", redirect);
+			//Smash excess white space
+			cmd[i].numArgs = destroyWhitespace(process);
 
-			//Check for redirection
-			char *process = strtok_r(redirect, ">", &redirect);
-			printf("redirect post: %s.\n", redirect);
-			int redirection = 0;
-			if (strcmp(temp, process)) {
-				redirection = 1;
-				printf("%s\n", "Redirection detected");
-			}
-			free(temp);
+			//Organize into arguments
+			cmd[i].args = getArgs(cmd[i].numArgs, process);
+			cmd[i].name = malloc(strlen(cmd[i].args[0]) + 1);
+			strcpy(cmd[i].name, cmd[i].args[0]);
 
-			//Get rid of excess white space
-			process  = destroyWhitespace(process);
-			redirect = destroyWhitespace(redirect);
-			//Get number of arguments
-			numArgs = countTerms(process, ' ');
-
-			//Now actually need to get args
-			char **argsArray = getArgs(numArgs, process);
-			//argsArray stores the name of the proc at index 0 and the rest of the
-			//arguments at later indeces.
-			//We now have our proc name, our number of args, and an array of them.
-			//Can now execute process.
-
-			//Going to code for built in commands first as those are probably
-			//more likely to occur.
-			//Exit
-			if (!strcmp(argsArray[0], "exit")) {
-				if (numArgs != 1) printError();
+			//Command Array built. Now run built-ins.
+			//exit
+			if (!strcmp(cmd[i].name, "exit")) {
+				cmd[i].builtin = 1;
+				if (cmd[i].numArgs != 1) printError();
 				else exit(0);
 			}
 
 			//cd
-			else if (!strcmp(argsArray[0], "cd")) {
-				if (numArgs != 2) printError();
-				else {
-					if(chdir(argsArray[1]) == -1) printError();
-				}
+			else if (!strcmp(cmd[i].name, "cd")) {
+				cmd[i].builtin = 1;
+				if (cmd[i].numArgs != 2)printError();
+				else if(chdir(cmd[i].args[1]) == -1) printError();
 			}
 
-
-			//Path
-			//User supplies paths to search for programs to use.
-			//This function simply replaces the char *path[] variable with the
-			//argsArray generated by the command minus argsArray[0].
-			else if(!strcmp(argsArray[0], "path")) {
-				//Shift argsArray[0] out of array.
-				n = 1;
-				for (int i = 0; i < numArgs - 1; i++) {
-					strcpy(argsArray[i], argsArray[i + 1]);
-					//Put a '/' on the end if there isn't one.
-					if (argsArray[i][strlen(argsArray[i]) - 1] != '/')
-						strcat(argsArray[i], "/");
-				}
-				strcpy(argsArray[numArgs - 1], "");
-
-				//Clear previous Paths
-				for (int i = 0; i < numPaths; i++) free(path[i]);
-				free(path);
-
-				//Set path to point to args array.
-				path = argsArray;
-				numPaths = numArgs - 1;
-				printf("argsArray: %p\n", argsArray);
-				printf("pathPtr: %p\n", path);
-
-
-				//Test paths.
-				for (int i = 0; i < numArgs - 1; i++) {
-					//path[i] = argsArray[i];
-					printf("Paths: %s\n", path[i]);
-
-				}
+			//path
+			else if (!strcmp(cmd[i].name, "path")) {
+				cmd[i].builtin = 1;
+				numPaths = updatePaths(path, cmd[i], numPaths);
 			}
-
-
-			//Actual programs
-			//Need to loop through all paths to try and find program
-			//concat the program onto the end of the path and try to access it
-			//if possible, set success to 1 to exit the loop
-			//else increment the counter.
-			else {
-
-
-				char *currPath = malloc(100);
-				int success = 0;
-				int currArg = 0;
-				while (currArg < numPaths || !success) {
-					strcpy(currPath, path[currArg]);
-					currPath = strcat(currPath, argsArray[0]);
-					if(!access(currPath, X_OK)) {
-						success = 1;
-					}
-					currArg++;
-				}
-				if (success) {
-					if(fork() == 0) {
-						if (redirection) {
-							printf("redirection output: .%s.\n", redirect);
-							int out = open(redirect, O_WRONLY | O_TRUNC | O_CREAT,
-								S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
-							dup2(out, 1);
-							close(out);
-						}
-						execv(currPath, argsArray);
-					}
-					else wait(NULL);
-				}
-				else printError();
-				free(currPath);
-				currPath = NULL;
-			}
-
-			//Need to free up heap space taken by argsArray if path wasn't called
-			if (!n) {
-				for (int i = 0; i < numArgs; i++) free(argsArray[i]);
-				free(argsArray);
-				n = 0;
-			}
-
-			free(process);
-			free(redirect);
-
-			if(!mode) printf("%s", "wish> ");
-			getline(&line, &n, stdin);
+			//neat, now we can do real programs.
+			linePtr = strtok_r(NULL, "&\n", &line);
 		}
-		//}
+
+		if (numPaths) runCmds(cmd, path, numCmds, numPaths);
+		else printError();
+
+		//Free up everything
+		for (int i = 0; i < numCmds; i++) {
+			for (int j = 0; j < cmd[i].numArgs; j++) free(cmd[i].args[j]);
+
+			free(cmd[i].args);
+			//printf("%s\n", "Prename");
+			free(cmd[i].name);
+			//printf("%s\n", "TEST");
+			free(cmd[i].redirect);
+			free(cmd[i].full);
+		}
+		free(cmd);
+		cmd = NULL;
+		if (!mode) {
+			printf("%s", "wish> ");
+			fflush(stdout);
+		}
+		numChars = getline(&line, &n, stdin);
+	}
 	exit(0);
 }
