@@ -136,7 +136,7 @@ void runCmds(Command *cmd, char** path, int numCmds, int numPaths) {
 	for (int i = 0; i < numCmds; i++) {
 
 		correctPath[i] = calloc(100,1);
-		if (cmd[i].builtin == 0) {
+		if (cmd[i].builtin == 0 && cmd[i].ok == 1) {
 			char *currPath = calloc(100,1);
 			//printf("%s\n", "Hey");
 			int j = 0;
@@ -148,7 +148,6 @@ void runCmds(Command *cmd, char** path, int numCmds, int numPaths) {
 				strcat(currPath, cmd[i].name);
 				if (!access(currPath, X_OK)) {
 					strcpy(correctPath[i], currPath);
-
 				}
 				j++;
 			}
@@ -169,11 +168,14 @@ void runCmds(Command *cmd, char** path, int numCmds, int numPaths) {
 					int out = open(cmd[i].redirect, O_WRONLY | O_TRUNC | O_CREAT, S_IRUSR | S_IRGRP | S_IWGRP | S_IWUSR);
 					dup2(out, 1);
 					close(out);
-				};
+				}
 				execv(correctPath[i], cmd[i].args);
 			}
 		}
-		else if (cmd[i].builtin == 0) printError();
+		else if (correctPath[i][0] == '\0' && cmd[i].builtin == 0 && cmd[i].ok == 1) {
+			printError();
+			//printf("%s\n", "Garbage");
+		}
 	}
 
 	//Wait for children and clean up
@@ -184,34 +186,46 @@ void runCmds(Command *cmd, char** path, int numCmds, int numPaths) {
 	}
 }
 
-Command* buildCmds(char* line) {
-	int numCmds = countTerms(line, '&');
-	if (numCmds == 0) return NULL;
+Command* buildCmds(char *line, int numCmds, int numChars) {
 	char *linePtr = strtok_r(line, "&\n", &line);
 	Command *cmd = malloc(numCmds * sizeof(Command));
+
+	//For each parallel command
 	for (int i = 0; i < numCmds; i++) {
-		cmd[i].builtin = 0;
-		cmd[i].ok = 1;
-		//Set redirection
-		//Get args, set name and args
-		cmd[i].full = malloc(numChars);
-		strcpy(cmd[i].full, linePtr);
-		cmd[i].redirect = calloc(1, numChars);
-		char *process = malloc(numChars);
-		if (strstr(cmd[i].full, ">")) {
-			getRedirect(cmd[i].redirect, process, cmd[i].full);
-			cmd[i].ok = destroyWhitespace(cmd[i].redirect);
+		if (linePtr) {
+			cmd[i].builtin = 0;
+			cmd[i].ok = 1;
+			//Set redirection
+			//Get args, set name and args
+			cmd[i].full = malloc(numChars);
+			strcpy(cmd[i].full, linePtr);
+			cmd[i].redirect = calloc(1, numChars);
+			char *process = malloc(numChars);
+			if (strstr(cmd[i].full, ">")) {
+				getRedirect(cmd[i].redirect, process, cmd[i].full);
+				cmd[i].ok = destroyWhitespace(cmd[i].redirect);
+				if (cmd[i].redirect[0] == '\0' || cmd[i].ok != 1) {
+					printError();
+					//printf("%s\n", "A");
+				}
+			}
+			else strcpy(process, cmd[i].full);
+
+			//Smash excess white space
+			cmd[i].numArgs = destroyWhitespace(process);
+			//printf("Process: .%s.\n", process);
+			if (process[0] == '\0') {
+				cmd[i].ok = 0;
+			//	return NULL;
+			}
+
+			//Organize into arguments
+			cmd[i].args = getArgs(cmd[i].numArgs, process);
+			cmd[i].name = malloc(strlen(cmd[i].args[0]) + 1);
+			strcpy(cmd[i].name, cmd[i].args[0]);
+			//printf("%p\n", &cmd[0]);
 		}
-		else strcpy(process, cmd[i].full);
-
-		//Smash excess white space
-		cmd[i].numArgs = destroyWhitespace(process);
-
-		//Organize into arguments
-		cmd[i].args = getArgs(cmd[i].numArgs, process);
-		cmd[i].name = malloc(strlen(cmd[i].args[0]) + 1);
-		strcpy(cmd[i].name, cmd[i].args[0]);
-
+		else cmd[i].ok = 0;
 		linePtr = strtok_r(NULL, "&\n", &line);
 	}
 	return cmd;
@@ -221,11 +235,9 @@ Command* buildCmds(char* line) {
 int main(int argc, char *argv[]) {
 	size_t n = 0;
 	char *line = NULL;
-	char *linePtr;
 	char **path;
 	int numPaths = 2;
 	int mode = 0;
-	int numCmds = 0;
 	int numChars = 0;
 	path = malloc(2 * sizeof(char*));
 	path[0] = malloc(10);
@@ -253,73 +265,57 @@ int main(int argc, char *argv[]) {
 	if(!mode) printf("%s", "wish> ");
 	numChars = getline(&line, &n, stdin);
 	while (line != NULL) {
-		n = 0;
-		//Build array of commands
-		numCmds = countTerms(line, '&');
-		linePtr = strtok_r(line, "&\n", &line);
-		Command *cmd = malloc(numCmds * sizeof(Command));
+		Command *cmd = NULL;
+		int numCmds = countTerms(line, '&');
+		if (numCmds) {
+			cmd = buildCmds(line, numCmds, numChars);
+			if (cmd == NULL) numCmds = 0;
+		}
+		//printf("%p\n", cmd);
+
+		//Command Array built. Now run built-ins.
+
+		//Builtins
 		for (int i = 0; i < numCmds; i++) {
-			cmd[i].builtin = 0;
-			cmd[i].ok = 1;
-			//Set redirection
-			//Get args, set name and args
-			cmd[i].full = malloc(numChars);
-			strcpy(cmd[i].full, linePtr);
-			cmd[i].redirect = calloc(1, numChars);
-			char *process = malloc(numChars);
-			if (strstr(cmd[i].full, ">")) {
-				getRedirect(cmd[i].redirect, process, cmd[i].full);
-				cmd[i].ok = destroyWhitespace(cmd[i].redirect);
+			//printf("ok: %d\n", cmd[i].ok);
+			if (cmd[i].ok == 1) {
+				//exit
+				if (!strcmp(cmd[i].name, "exit")) {
+					cmd[i].builtin = 1;
+					if (cmd[i].numArgs != 1) printError();
+					else exit(0);
+				}
+
+				//cd
+				else if (!strcmp(cmd[i].name, "cd")) {
+					cmd[i].builtin = 1;
+					if (cmd[i].numArgs != 2)printError();
+					else if(chdir(cmd[i].args[1]) == -1) printError();
+				}
+
+				//path
+				else if (!strcmp(cmd[i].name, "path")) {
+					cmd[i].builtin = 1;
+					numPaths = updatePaths(path, cmd[i], numPaths);
+				}
 			}
-			else strcpy(process, cmd[i].full);
-
-			//Smash excess white space
-			cmd[i].numArgs = destroyWhitespace(process);
-
-			//Organize into arguments
-			cmd[i].args = getArgs(cmd[i].numArgs, process);
-			cmd[i].name = malloc(strlen(cmd[i].args[0]) + 1);
-			strcpy(cmd[i].name, cmd[i].args[0]);
-
-			//Command Array built. Now run built-ins.
-			//exit
-			if (!strcmp(cmd[i].name, "exit")) {
-				cmd[i].builtin = 1;
-				if (cmd[i].numArgs != 1) printError();
-				else exit(0);
-			}
-
-			//cd
-			else if (!strcmp(cmd[i].name, "cd")) {
-				cmd[i].builtin = 1;
-				if (cmd[i].numArgs != 2)printError();
-				else if(chdir(cmd[i].args[1]) == -1) printError();
-			}
-
-			//path
-			else if (!strcmp(cmd[i].name, "path")) {
-				cmd[i].builtin = 1;
-				numPaths = updatePaths(path, cmd[i], numPaths);
-			}
-			//neat, now we can do real programs.
-			linePtr = strtok_r(NULL, "&\n", &line);
 		}
 
 		if (numPaths) runCmds(cmd, path, numCmds, numPaths);
 		else printError();
+		//printf("%s\n", "Here");
 
 		//Free up everything
 		for (int i = 0; i < numCmds; i++) {
-			for (int j = 0; j < cmd[i].numArgs; j++) free(cmd[i].args[j]);
-
-			free(cmd[i].args);
-			//printf("%s\n", "Prename");
-			free(cmd[i].name);
-			//printf("%s\n", "TEST");
-			free(cmd[i].redirect);
-			free(cmd[i].full);
+			if (cmd[i].ok) {
+				for (int j = 0; j < cmd[i].numArgs; j++) free(cmd[i].args[j]);
+				free(cmd[i].args);
+				free(cmd[i].name);
+				free(cmd[i].redirect);
+				free(cmd[i].full);
+			}
 		}
-		free(cmd);
+		if (cmd) free(cmd);
 		cmd = NULL;
 		if (!mode) {
 			printf("%s", "wish> ");
