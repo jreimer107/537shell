@@ -24,7 +24,6 @@ typedef struct {
 	char ok;
 } Command;
 
-
 //Edits the given string to not have excess white space.
 //Returns number of words.
 int destroyWhitespace(char* string) {
@@ -34,9 +33,16 @@ int destroyWhitespace(char* string) {
 	//first need to find first letter.
 	int i = 0;
 	int j = 0;
-	while (isspace(string[i])) i++;
+	while (isspace(string[i])) {
+		i++;
+		if (string[i] == '\0') {
+			strcpy(string, "");
+			return 0;
+		}
+	}
 	//Have found first letter. Now need to parse through so that one space is left
 	//between words.
+	//Check for all white space
 	while(i < strlen(string)) {
 		if (!isspace(string[i])) out[j++] = string[i];
 		else if (!isspace(string[i+1]) && string[i+1] != '\0') {
@@ -48,7 +54,6 @@ int destroyWhitespace(char* string) {
 	out[j] = '\0';
 	strcpy(string, out);
 	free(out);
-	//printf("Post destroy: %s\n", out);
 	return numWords;
 }
 
@@ -70,20 +75,15 @@ int countTerms(char *string, char target) {
 char** getArgs(int numArgs, char *process) {
 	char** args;
 	//Set temp to parse through given process.
-	char *temp = strtok(process, " \0");
+	char *temp = strtok(process, " ");
 	args = malloc(numArgs * sizeof(char*));
 	args[0] = malloc(strlen(process) + 1);
 	strcpy(args[0], temp);
 	for (int i = 1; i < numArgs; i++) {
-		//args[i] = malloc(strlen(process) + 1);
-		temp = strtok(NULL, " \0");
+		temp = strtok(NULL, " ");
 		args[i] = strdup(temp);
-		//printf("temp: %p %s\n", temp, temp);
-		//strtok returns null on empty string
-		//if (temp[0] == '\0') strcpy
-		//strcpy(args[i], temp);
-		//printf("argsArray: %p %s\n", &args[i], args[i]);
 	}
+
 	return args;
 }
 
@@ -91,17 +91,10 @@ char** getArgs(int numArgs, char *process) {
 void getRedirect(char *redirect, char *process, char *string) {
 	char *temp = strdup(string);
 	char *tempPtr;
-	//printf("temp: %s\n", temp);
 	tempPtr = strtok(temp, ">");
 	strcpy(process, tempPtr);
-	//printf("process: %s\n", process);
-	//printf("temp: %s\n", temp);
 	tempPtr = strtok(NULL, "\0");
-	//printf("tempPtr: %s\n",tempPtr);
-	//printf("Redirect: %s\n", redirect);
 	if (tempPtr) strcpy(redirect, tempPtr);
-	//printf("tempPtr: .%s.\n", tempPtr);
-	//printf("Redirect: %s\n", redirect);
 	free(temp);
 }
 
@@ -130,32 +123,24 @@ int updatePaths(char **path, Command cmd, int numPaths){
 
 void runCmds(Command *cmd, char** path, int numCmds, int numPaths) {
 	int children = 0;
-	//char **correctPath = malloc(numCmds * sizeof(char*));
-	//char correctPath[100][100];
 	char *correctPath[numCmds];
 	for (int i = 0; i < numCmds; i++) {
 
 		correctPath[i] = calloc(100,1);
 		if (cmd[i].builtin == 0 && cmd[i].ok == 1) {
 			char *currPath = calloc(100,1);
-			//printf("%s\n", "Hey");
 			int j = 0;
 			//Find correct path
 			while(j < numPaths - 1 && correctPath[i][0] == '\0') {
 				strcpy(currPath, path[j + 1]);
-				//printf("currPath: %s\n", currPath);
-				//printf("currArg: %s\n", cmd[i].name);
 				strcat(currPath, cmd[i].name);
 				if (!access(currPath, X_OK)) {
 					strcpy(correctPath[i], currPath);
 				}
 				j++;
 			}
-			//printf("%s\n", currPath);
 			free(currPath);
-			//printf("%s\n", "test");
 		}
-		//printf("%s\n", correctPath[i]);
 	}
 
 	//Now execute each nonbuiltin cmd
@@ -169,17 +154,16 @@ void runCmds(Command *cmd, char** path, int numCmds, int numPaths) {
 					dup2(out, 1);
 					close(out);
 				}
-				execv(correctPath[i], cmd[i].args);
+				cmd[i].args[cmd[i].numArgs] = NULL;
+				execv(correctPath[i], cmd[i].args);\
 			}
 		}
 		else if (correctPath[i][0] == '\0' && cmd[i].builtin == 0 && cmd[i].ok == 1) {
 			printError();
-			//printf("%s\n", "Garbage");
 		}
 	}
 
 	//Wait for children and clean up
-	//printf("Children: %d\n", children);
 	for (int i = 0; i < children; i++) {
 		wait(NULL);
 		free(correctPath[i]);
@@ -205,32 +189,31 @@ Command* buildCmds(char *line, int numCmds, int numChars) {
 				getRedirect(cmd[i].redirect, process, cmd[i].full);
 				cmd[i].ok = destroyWhitespace(cmd[i].redirect);
 				if (cmd[i].redirect[0] == '\0' || cmd[i].ok != 1) {
+					cmd[i].ok = 0;
 					printError();
-					//printf("%s\n", "A");
 				}
 			}
 			else strcpy(process, cmd[i].full);
 
 			//Smash excess white space
 			cmd[i].numArgs = destroyWhitespace(process);
-			//printf("Process: .%s.\n", process);
-			if (process[0] == '\0') {
+			if (process[0] == '\0' || cmd[i].numArgs == 0) {
 				cmd[i].ok = 0;
 			//	return NULL;
 			}
 
 			//Organize into arguments
-			cmd[i].args = getArgs(cmd[i].numArgs, process);
-			cmd[i].name = malloc(strlen(cmd[i].args[0]) + 1);
-			strcpy(cmd[i].name, cmd[i].args[0]);
-			//printf("%p\n", &cmd[0]);
+			if (cmd[i].ok == 1) {
+				cmd[i].args = getArgs(cmd[i].numArgs, process);
+				cmd[i].name = malloc(strlen(cmd[i].args[0]) + 1);
+				strcpy(cmd[i].name, cmd[i].args[0]);
+			}
 		}
 		else cmd[i].ok = 0;
 		linePtr = strtok_r(NULL, "&\n", &line);
 	}
 	return cmd;
 }
-
 
 int main(int argc, char *argv[]) {
 	size_t n = 0;
@@ -240,10 +223,8 @@ int main(int argc, char *argv[]) {
 	int mode = 0;
 	int numChars = 0;
 	path = malloc(2 * sizeof(char*));
-	path[0] = malloc(10);
-	path[1] = malloc(10);
-	strcpy(path[0], "path");
-	strcpy(path[1], "/bin/");
+	path[0] = strdup("path");
+	path[1] = strdup("/bin/");
 
 	//Batch vs interactive mode
 	if (argc == 2) {
@@ -264,20 +245,19 @@ int main(int argc, char *argv[]) {
 	//Parse each line
 	if(!mode) printf("%s", "wish> ");
 	numChars = getline(&line, &n, stdin);
-	while (line != NULL) {
+	while (1) {
+		if (numChars == -1) exit(0);
 		Command *cmd = NULL;
 		int numCmds = countTerms(line, '&');
 		if (numCmds) {
 			cmd = buildCmds(line, numCmds, numChars);
 			if (cmd == NULL) numCmds = 0;
 		}
-		//printf("%p\n", cmd);
 
 		//Command Array built. Now run built-ins.
 
 		//Builtins
 		for (int i = 0; i < numCmds; i++) {
-			//printf("ok: %d\n", cmd[i].ok);
 			if (cmd[i].ok == 1) {
 				//exit
 				if (!strcmp(cmd[i].name, "exit")) {
@@ -303,7 +283,6 @@ int main(int argc, char *argv[]) {
 
 		if (numPaths) runCmds(cmd, path, numCmds, numPaths);
 		else printError();
-		//printf("%s\n", "Here");
 
 		//Free up everything
 		for (int i = 0; i < numCmds; i++) {
